@@ -47,7 +47,7 @@ func (d *SSHDockerItem) Generate() (cli *client.Client, hostIP string, bindingIP
 	if err != nil {
 		panic(err)
 	}
-	hostIP = u.Hostname()
+	hostIP, bindingIP = u.Hostname(), "0.0.0.0"
 	cli, err = DockerClientFromSSH(d.DaemonURL)
 	if err != nil {
 		panic(err)
