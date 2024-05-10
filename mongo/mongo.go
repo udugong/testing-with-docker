@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -24,6 +25,7 @@ type MongoDB struct {
 	dockertesting.DockerItemGenerator
 	ImageName     string
 	ContainerPort nat.Port
+	waitInterval  time.Duration // 等待容器启动的间隔
 }
 
 func New(dockerItemGenerator dockertesting.DockerItemGenerator, opts ...Option) *MongoDB {
@@ -31,6 +33,7 @@ func New(dockerItemGenerator dockertesting.DockerItemGenerator, opts ...Option) 
 		DockerItemGenerator: dockerItemGenerator,
 		ImageName:           "mongo:7.0",
 		ContainerPort:       "27017/tcp",
+		waitInterval:        time.Second,
 	}
 	for _, opt := range opts {
 		opt.apply(res)
@@ -47,14 +50,20 @@ type optionFunc func(*MongoDB)
 func (f optionFunc) apply(r *MongoDB) { f(r) }
 
 func WithImageName(name string) Option {
-	return optionFunc(func(r *MongoDB) {
-		r.ImageName = name
+	return optionFunc(func(m *MongoDB) {
+		m.ImageName = name
 	})
 }
 
 func WithContainerPort(port nat.Port) Option {
-	return optionFunc(func(r *MongoDB) {
-		r.ContainerPort = port
+	return optionFunc(func(m *MongoDB) {
+		m.ContainerPort = port
+	})
+}
+
+func WithWaitInterval(interval time.Duration) Option {
+	return optionFunc(func(m *MongoDB) {
+		m.waitInterval = interval
 	})
 }
 
@@ -110,13 +119,15 @@ func (mgo *MongoDB) RunInDocker(m *testing.M) int {
 	if err != nil {
 		panic(err)
 	}
-	containerId := resp.ID
+	containerID := resp.ID
 
 	// ContainerStart 根据containerID,向 docker 守护进程发送请求以启动容器。
-	err = cli.ContainerStart(ctx, containerId, container.StartOptions{})
+	err = cli.ContainerStart(ctx, containerID, container.StartOptions{})
 	if err != nil {
 		panic(err)
 	}
+
+	time.Sleep(mgo.waitInterval)
 
 	// ContainerInspect 返回容器信息。
 	insRes, err := cli.ContainerInspect(ctx, resp.ID)
@@ -126,7 +137,7 @@ func (mgo *MongoDB) RunInDocker(m *testing.M) int {
 
 	defer func() {
 		// ContainerRemove 根据containerID,杀死并从 docker 主机中删除一个容器。
-		err = cli.ContainerRemove(ctx, containerId, container.RemoveOptions{Force: true})
+		err = cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
 		if err != nil {
 			panic(err)
 		}
@@ -139,6 +150,10 @@ func (mgo *MongoDB) RunInDocker(m *testing.M) int {
 			}
 		}
 	}()
+
+	if insRes.State.ExitCode != 0 {
+		panic("容器启动失败")
+	}
 
 	// Ports是PortBinding的集合
 	hostPort := insRes.NetworkSettings.Ports[mgo.ContainerPort][0]
