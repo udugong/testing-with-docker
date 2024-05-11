@@ -18,7 +18,7 @@ import (
 	"github.com/udugong/testing-with-docker"
 )
 
-var redisURI string
+var redisAddr string
 
 type Redis struct {
 	dockertesting.DockerItemGenerator
@@ -158,7 +158,7 @@ func (r *Redis) RunInDocker(m *testing.M) int {
 
 	// Ports是PortBinding的集合
 	hostPort := insRes.NetworkSettings.Ports[r.ContainerPort][0]
-	redisURI = fmt.Sprintf("%s:%s", hostIP, hostPort.HostPort)
+	redisAddr = fmt.Sprintf("%s:%s", hostIP, hostPort.HostPort)
 
 	return m.Run()
 }
@@ -166,13 +166,13 @@ func (r *Redis) RunInDocker(m *testing.M) int {
 // NewClient creates a redis client connected to the redis instance in docker.
 func NewClient(ctx context.Context) (redis.Cmdable, error) {
 	// 这里做一个保护
-	if redisURI == "" {
-		return nil, fmt.Errorf("redis uri not set. Please run Redis.RunInDocker in TestMain")
+	if redisAddr == "" {
+		return nil, fmt.Errorf("redis addr not set. Please run Redis.RunInDocker in TestMain")
 	}
 
 	// 全局模式
 	rdb := redis.NewClient(&redis.Options{
-		Addr: redisURI,
+		Addr: redisAddr,
 	})
 	_, err := rdb.Ping(ctx).Result()
 	if err != nil {
