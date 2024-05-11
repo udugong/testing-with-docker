@@ -15,6 +15,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 
 	dockertesting "github.com/udugong/testing-with-docker"
 )
@@ -47,7 +48,7 @@ type Option interface {
 
 type optionFunc func(*MongoDB)
 
-func (f optionFunc) apply(r *MongoDB) { f(r) }
+func (f optionFunc) apply(m *MongoDB) { f(m) }
 
 func WithImageName(name string) Option {
 	return optionFunc(func(m *MongoDB) {
@@ -164,9 +165,16 @@ func (mgo *MongoDB) RunInDocker(m *testing.M) int {
 
 // NewClient creates a client connected to the mongo instance in docker.
 func NewClient(ctx context.Context) (*mongo.Client, error) {
-	// 这里再做一个保护
 	if mongoURI == "" {
-		return nil, fmt.Errorf("mong uri not set. Please run MongoDB.RunInDocker in TestMain")
+		return nil, fmt.Errorf("mongo uri not set. Please run MongoDB.RunInDocker in TestMain")
 	}
-	return mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
+	conn, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
+	if err != nil {
+		return nil, err
+	}
+	err = conn.Ping(ctx, readpref.Primary())
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
 }
