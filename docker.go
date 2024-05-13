@@ -31,7 +31,6 @@ func (l *LocalDockerItem) Generate() (cli *client.Client, hostIP string, binding
 
 type SSHDockerItem struct {
 	// DaemonURL ssh://<user>@<host> URL requires Docker 18.09 or later on the remote host.
-	// If DaemonURL != "ssh://..." use local Docker.
 	DaemonURL string
 }
 
