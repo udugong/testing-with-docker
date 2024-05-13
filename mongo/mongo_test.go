@@ -1,4 +1,4 @@
-package mgo
+package mgotest
 
 import (
 	"context"
@@ -11,11 +11,11 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 
-	dockertesting "github.com/udugong/testing-with-docker"
+	"github.com/udugong/testing-with-docker"
 )
 
 func TestMongoDB(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cli, err := NewClient(ctx)
 	require.NoError(t, err)
@@ -24,7 +24,7 @@ func TestMongoDB(t *testing.T) {
 		ID      primitive.ObjectID `bson:"_id"`
 		Content string             `bson:"content"`
 	}
-	db := cli.Database("test_by_docker")
+	db := cli.Database("test_in_docker")
 	col := db.Collection("test")
 
 	content := "hello world"
@@ -49,5 +49,5 @@ func TestMongoDB(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	os.Exit(New(dockertesting.NewLocalDockerItem()).RunInDocker(m))
+	os.Exit(New(dockertest.NewLocalDockerItem()).RunInDocker(m))
 }

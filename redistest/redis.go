@@ -1,4 +1,4 @@
-package redis
+package redistest
 
 import (
 	"context"
@@ -21,13 +21,13 @@ import (
 var redisAddr string
 
 type Redis struct {
-	dockertesting.DockerItemGenerator
+	dockertest.DockerItemGenerator
 	ImageName     string
 	ContainerPort nat.Port
 	waitInterval  time.Duration // 等待容器启动的间隔
 }
 
-func New(generator dockertesting.DockerItemGenerator, opts ...Option) *Redis {
+func New(generator dockertest.DockerItemGenerator, opts ...Option) *Redis {
 	res := &Redis{
 		DockerItemGenerator: generator,
 		ImageName:           "redis:6",

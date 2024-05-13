@@ -1,4 +1,4 @@
-package redis
+package redistest
 
 import (
 	"context"
@@ -27,5 +27,5 @@ func TestRedisWithDocker(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	os.Exit(New(dockertesting.NewLocalDockerItem(), WithImageName("redis:7")).RunInDocker(m))
+	os.Exit(New(dockertest.NewLocalDockerItem(), WithImageName("redis:7")).RunInDocker(m))
 }

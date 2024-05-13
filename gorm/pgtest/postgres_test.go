@@ -1,4 +1,4 @@
-package mysql
+package pgtest
 
 import (
 	"context"
@@ -9,13 +9,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	dockertesting "github.com/udugong/testing-with-docker"
+	"github.com/udugong/testing-with-docker"
 )
 
-func TestMySQL(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+func TestPostgres(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	db, err := NewGormMySQlDB(ctx)
+	db, err := NewGormPostgresDB(ctx)
 	require.NoError(t, err)
 
 	type Table struct {
@@ -43,5 +43,5 @@ func TestMySQL(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	os.Exit(New(dockertesting.NewLocalDockerItem(), "test_by_docker").RunInDocker(m))
+	os.Exit(New(dockertest.NewLocalDockerItem(), "test_in_docker").RunInDocker(m))
 }

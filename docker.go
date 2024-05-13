@@ -1,4 +1,4 @@
-package dockertesting
+package dockertest
 
 import (
 	"net/http"
