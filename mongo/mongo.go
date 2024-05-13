@@ -1,4 +1,4 @@
-package mgo
+package mgotest
 
 import (
 	"context"
@@ -17,23 +17,25 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 
-	dockertesting "github.com/udugong/testing-with-docker"
+	"github.com/udugong/testing-with-docker"
 )
 
 var mongoURI string
 
 type MongoDB struct {
-	dockertesting.DockerItemGenerator
+	dockertest.DockerItemGenerator
 	ImageName     string
 	ContainerPort nat.Port
+	connOptions   string
 	waitInterval  time.Duration // 等待容器启动的间隔
 }
 
-func New(dockerItemGenerator dockertesting.DockerItemGenerator, opts ...Option) *MongoDB {
+func New(dockerItemGenerator dockertest.DockerItemGenerator, opts ...Option) *MongoDB {
 	res := &MongoDB{
 		DockerItemGenerator: dockerItemGenerator,
 		ImageName:           "mongo:7.0",
 		ContainerPort:       "27017/tcp",
+		connOptions:         "",
 		waitInterval:        time.Second,
 	}
 	for _, opt := range opts {
@@ -59,6 +61,12 @@ func WithImageName(name string) Option {
 func WithContainerPort(port nat.Port) Option {
 	return optionFunc(func(m *MongoDB) {
 		m.ContainerPort = port
+	})
+}
+
+func WithConnOptions(opts string) Option {
+	return optionFunc(func(m *MongoDB) {
+		m.connOptions = opts
 	})
 }
 
@@ -158,7 +166,7 @@ func (mgo *MongoDB) RunInDocker(m *testing.M) int {
 
 	// Ports是PortBinding的集合
 	hostPort := insRes.NetworkSettings.Ports[mgo.ContainerPort][0]
-	mongoURI = fmt.Sprintf("mongodb://%s:%s", hostIP, hostPort.HostPort)
+	mongoURI = fmt.Sprintf("mongodb://%s:%s/?%s", hostIP, hostPort.HostPort, mgo.connOptions)
 
 	return m.Run()
 }
