@@ -4,7 +4,7 @@
 
 # go versions
 
-`>=1.20`
+`>=1.21`
 
 # usage
 
