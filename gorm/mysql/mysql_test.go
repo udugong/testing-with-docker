@@ -8,14 +8,17 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/udugong/testing-with-docker"
 )
 
 func TestMySQL(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	db, err := NewGormMySQlDB(ctx)
+	db, err := NewGormMySQlDB(ctx, &gorm.Config{
+		TranslateError: true,
+	})
 	require.NoError(t, err)
 
 	type Table struct {
@@ -43,5 +46,6 @@ func TestMySQL(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	os.Exit(New(dockertest.NewLocalDockerItem(), "test_in_docker").RunInDocker(m))
+	os.Exit(New(dockertest.NewLocalDockerItem(), "test_in_docker",
+		WithContainerName("mysql-test")).RunInDocker(m)) // 更改容器名称。防止名称重复创建失败
 }
