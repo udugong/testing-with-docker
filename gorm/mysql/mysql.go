@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -27,9 +29,11 @@ type MySQL struct {
 	ContainerPort nat.Port
 	DatabaseName  string
 	connOptions   string
-	waitInterval  time.Duration // 等待容器启动的间隔
 	containerEnv  []string
 	containerCmd  []string
+	containerName string
+	waitInterval  time.Duration // 等待容器启动的间隔
+	maxWaitTime   time.Duration // 最大等待容器启动的时间
 }
 
 func New(generator dockertest.DockerItemGenerator, databaseName string, opts ...Option) *MySQL {
@@ -47,7 +51,6 @@ func defaultMySQL(generator dockertest.DockerItemGenerator, databaseName string)
 		ContainerPort:       "3306/tcp",
 		DatabaseName:        databaseName,
 		connOptions:         "",
-		waitInterval:        10 * time.Second,
 		containerEnv: []string{
 			"MYSQL_ALLOW_EMPTY_PASSWORD=true", // 允许mysql的密码为空
 			// "MYSQL_ROOT_PASSWORD=123456",
@@ -60,6 +63,9 @@ func defaultMySQL(generator dockertest.DockerItemGenerator, databaseName string)
 			"--explicit_defaults_for_timestamp=true",
 			"--lower_case_table_names=1",
 		},
+		containerName: "mysql_test",
+		waitInterval:  200 * time.Millisecond,
+		maxWaitTime:   time.Minute,
 	}
 }
 
@@ -85,9 +91,21 @@ func WithContainerPort(port nat.Port) Option {
 	})
 }
 
+func WithConnOptions(opts string) Option {
+	return optionFunc(func(s *MySQL) {
+		s.connOptions = opts
+	})
+}
+
 func WithWaitInterval(interval time.Duration) Option {
 	return optionFunc(func(s *MySQL) {
 		s.waitInterval = interval
+	})
+}
+
+func WithMaxWaitTime(interval time.Duration) Option {
+	return optionFunc(func(s *MySQL) {
+		s.maxWaitTime = interval
 	})
 }
 
@@ -103,15 +121,21 @@ func WithContainerCmd(cmd []string) Option {
 	})
 }
 
-func WithConnOptions(opts string) Option {
+func WithContainerName(name string) Option {
 	return optionFunc(func(s *MySQL) {
-		s.connOptions = opts
+		s.containerName = name
 	})
 }
 
 // RunInDocker runs the tests with
 // a mysql db instance in a docker container.
 func (s *MySQL) RunInDocker(m *testing.M) int {
+	defer func() {
+		if err := recover(); err != nil {
+			slog.Error("panic", "err", err)
+		}
+	}()
+
 	ctx := context.Background()
 	cli, hostIP, bindingHostIP := s.Generate()
 
@@ -162,7 +186,7 @@ func (s *MySQL) RunInDocker(m *testing.M) int {
 					},
 				},
 			},
-		}, nil, nil, "")
+		}, nil, nil, s.containerName)
 	if err != nil {
 		panic(err)
 	}
@@ -174,13 +198,34 @@ func (s *MySQL) RunInDocker(m *testing.M) int {
 		panic(err)
 	}
 
-	time.Sleep(s.waitInterval)
+	var insRes types.ContainerJSON
 
-	// ContainerInspect 返回容器信息。
-	insRes, err := cli.ContainerInspect(ctx, resp.ID)
-	if err != nil {
-		panic(err)
+	handCtx, cancel := context.WithTimeout(context.Background(), s.maxWaitTime)
+	ticker := time.NewTicker(s.waitInterval)
+	var done bool
+	for {
+		select {
+		case <-ticker.C:
+			// ContainerInspect 返回容器信息。
+			insRes, err = cli.ContainerInspect(ctx, resp.ID)
+			if err != nil {
+				panic(err)
+			}
+			switch insRes.State.Status {
+			case "created", "restarting":
+				continue
+			case "running", "paused", "removing", "exited", "dead":
+				done = true
+			}
+		case <-handCtx.Done():
+			done = true
+		}
+		if done {
+			break
+		}
 	}
+	cancel()
+	ticker.Stop()
 
 	defer func() {
 		// ContainerRemove 根据containerID,杀死并从 docker 主机中删除一个容器。
@@ -190,27 +235,30 @@ func (s *MySQL) RunInDocker(m *testing.M) int {
 		}
 
 		// 循环删除容器里所有的挂载
-		for _, res := range insRes.Mounts {
-			err := cli.VolumeRemove(ctx, res.Name, true)
-			if err != nil {
-				panic(err)
+		if insRes.Mounts != nil {
+			for _, res := range insRes.Mounts {
+				err := cli.VolumeRemove(ctx, res.Name, true)
+				if err != nil {
+					panic(err)
+				}
 			}
 		}
 	}()
 
-	if insRes.State.ExitCode != 0 {
-		panic("容器启动失败")
+	if insRes.State != nil && insRes.State.ExitCode != 0 {
+		slog.Error("容器启动异常", "ExitCode", insRes.State.ExitCode, "Status", insRes.State.Status)
 	}
 
 	// Ports是PortBinding的集合
 	hostPort := insRes.NetworkSettings.Ports[s.ContainerPort][0]
 	mysqlDSN = fmt.Sprintf("root:@tcp(%s:%s)/%s?%s",
 		hostIP, hostPort.HostPort, s.DatabaseName, s.connOptions)
+	slog.Info("data source name", "dsn", mysqlDSN)
 
 	return m.Run()
 }
 
-func NewGormMySQlDB(ctx context.Context) (*gorm.DB, error) {
+func NewGormMySQlDB(ctx context.Context, opts ...gorm.Option) (*gorm.DB, error) {
 	if mysqlDSN == "" {
 		return nil, fmt.Errorf("mysql dsn not set. Please run MySQL.RunInDocker in TestMain")
 	}
@@ -231,9 +279,5 @@ func NewGormMySQlDB(ctx context.Context) (*gorm.DB, error) {
 			}
 		}
 	}
-	db, err := gorm.Open(mysql.Open(mysqlDSN))
-	if err != nil {
-		return nil, err
-	}
-	return db.Debug(), nil
+	return gorm.Open(mysql.Open(mysqlDSN), opts...)
 }

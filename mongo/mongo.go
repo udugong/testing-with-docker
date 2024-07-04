@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -27,16 +29,20 @@ type MongoDB struct {
 	ImageName     string
 	ContainerPort nat.Port
 	connOptions   string
+	containerName string
 	waitInterval  time.Duration // 等待容器启动的间隔
+	maxWaitTime   time.Duration // 最大等待容器启动的时间
 }
 
 func New(dockerItemGenerator dockertest.DockerItemGenerator, opts ...Option) *MongoDB {
 	res := &MongoDB{
 		DockerItemGenerator: dockerItemGenerator,
-		ImageName:           "mongo:7.0",
+		ImageName:           "mongodb/mongodb-community-server:6.0.7-ubi8",
 		ContainerPort:       "27017/tcp",
 		connOptions:         "",
-		waitInterval:        time.Second,
+		containerName:       "mongo_test",
+		waitInterval:        200 * time.Millisecond,
+		maxWaitTime:         time.Minute,
 	}
 	for _, opt := range opts {
 		opt.apply(res)
@@ -70,15 +76,33 @@ func WithConnOptions(opts string) Option {
 	})
 }
 
+func WithContainerName(name string) Option {
+	return optionFunc(func(m *MongoDB) {
+		m.containerName = name
+	})
+}
+
 func WithWaitInterval(interval time.Duration) Option {
 	return optionFunc(func(m *MongoDB) {
 		m.waitInterval = interval
 	})
 }
 
+func WithMaxWaitTime(interval time.Duration) Option {
+	return optionFunc(func(m *MongoDB) {
+		m.maxWaitTime = interval
+	})
+}
+
 // RunInDocker runs the tests with
 // a mongodb instance in a docker container.
 func (mgo *MongoDB) RunInDocker(m *testing.M) int {
+	defer func() {
+		if err := recover(); err != nil {
+			slog.Error("panic", "err", err)
+		}
+	}()
+
 	ctx := context.Background()
 	cli, hostIP, bindingHostIP := mgo.Generate()
 
@@ -124,7 +148,7 @@ func (mgo *MongoDB) RunInDocker(m *testing.M) int {
 					},
 				},
 			},
-		}, nil, nil, "")
+		}, nil, nil, mgo.containerName)
 	if err != nil {
 		panic(err)
 	}
@@ -136,13 +160,34 @@ func (mgo *MongoDB) RunInDocker(m *testing.M) int {
 		panic(err)
 	}
 
-	time.Sleep(mgo.waitInterval)
+	var insRes types.ContainerJSON
 
-	// ContainerInspect 返回容器信息。
-	insRes, err := cli.ContainerInspect(ctx, resp.ID)
-	if err != nil {
-		panic(err)
+	handCtx, cancel := context.WithTimeout(context.Background(), mgo.maxWaitTime)
+	ticker := time.NewTicker(mgo.waitInterval)
+	var done bool
+	for {
+		select {
+		case <-ticker.C:
+			// ContainerInspect 返回容器信息。
+			insRes, err = cli.ContainerInspect(ctx, resp.ID)
+			if err != nil {
+				panic(err)
+			}
+			switch insRes.State.Status {
+			case "created", "restarting":
+				continue
+			case "running", "paused", "removing", "exited", "dead":
+				done = true
+			}
+		case <-handCtx.Done():
+			done = true
+		}
+		if done {
+			break
+		}
 	}
+	cancel()
+	ticker.Stop()
 
 	defer func() {
 		// ContainerRemove 根据containerID,杀死并从 docker 主机中删除一个容器。
@@ -152,31 +197,35 @@ func (mgo *MongoDB) RunInDocker(m *testing.M) int {
 		}
 
 		// 循环删除容器里所有的挂载
-		for _, res := range insRes.Mounts {
-			err := cli.VolumeRemove(ctx, res.Name, true)
-			if err != nil {
-				panic(err)
+		if insRes.Mounts != nil {
+			for _, res := range insRes.Mounts {
+				err := cli.VolumeRemove(ctx, res.Name, true)
+				if err != nil {
+					panic(err)
+				}
 			}
 		}
 	}()
 
-	if insRes.State.ExitCode != 0 {
-		panic("容器启动失败")
+	if insRes.State != nil && insRes.State.ExitCode != 0 {
+		slog.Error("容器启动异常", "ExitCode", insRes.State.ExitCode, "Status", insRes.State.Status)
 	}
 
 	// Ports是PortBinding的集合
 	hostPort := insRes.NetworkSettings.Ports[mgo.ContainerPort][0]
 	mongoURI = fmt.Sprintf("mongodb://%s:%s/?%s", hostIP, hostPort.HostPort, mgo.connOptions)
+	slog.Info("mongo uri", "uri", mongoURI)
 
 	return m.Run()
 }
 
 // NewClient creates a client connected to the mongo instance in docker.
-func NewClient(ctx context.Context) (*mongo.Client, error) {
+func NewClient(ctx context.Context, opts ...*options.ClientOptions) (*mongo.Client, error) {
 	if mongoURI == "" {
 		return nil, fmt.Errorf("mongo uri not set. Please run MongoDB.RunInDocker in TestMain")
 	}
-	conn, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
+	opts = append(opts, options.Client().ApplyURI(mongoURI))
+	conn, err := mongo.Connect(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
