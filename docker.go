@@ -34,6 +34,7 @@ type SSHDockerItem struct {
 	DaemonURL string
 }
 
+// NewSSHDockerItem daemonURL ssh://<user>@<host> URL requires Docker 18.09 or later on the remote host.
 func NewSSHDockerItem(daemonURL string) *SSHDockerItem {
 	return &SSHDockerItem{DaemonURL: daemonURL}
 }
